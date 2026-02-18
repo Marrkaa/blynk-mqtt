@@ -73,6 +73,33 @@ void log_callback(struct mosquitto *mosq, void *userdata, int level, const char 
     }
 }
 
+int get_mem_total(char *buffer, size_t buffer_size) {
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (!fp) {
+        return -1;
+    }
+    
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "MemTotal:", 9) == 0) {
+            char *value = line + 9;
+            while (*value == ' ' || *value == '\t') value++;
+            char *end = strstr(value, " kB");
+            if (end) {
+                size_t len = end - value;
+                if (len < buffer_size) {
+                    strncpy(buffer, value, len);
+                    buffer[len] = '\0';
+                    fclose(fp);
+                    return 0;
+                }
+            }
+        }
+    }
+    fclose(fp);
+    return -1;
+}
+
 int main(int argc, char *argv[])
 {
     uint8_t reconnect = true;
@@ -101,12 +128,27 @@ int main(int argc, char *argv[])
         mosquitto_loop_start(mosq);
 
         int uptime = 0;
+        int counter = 0;
         while (run) {
             sleep_ms(1000);
+            uptime++;
+            counter++;
 
             char buff[16];
-            int len = snprintf(buff, sizeof(buff), "%d", uptime++);
+            int len = snprintf(buff, sizeof(buff), "%d", uptime);
             mosquitto_publish(mosq, NULL, "ds/uptime", len, buff, 0, false);
+
+            if (counter >= 10) {
+                counter = 0;
+                char mem_buff[32];
+                char get_buff[32];
+                if (get_mem_total(mem_buff, sizeof(mem_buff)) == 0) {
+                    int mem_len = strlen(mem_buff);
+                    mosquitto_publish(mosq, NULL, "ds/Total ram", mem_len, mem_buff, 0, false);
+                    printf("Published RAM: %s\n", mem_buff);
+                    mosquitto_publish(mosq, NULL, "get/ds", mem_len, get_buff, 0, false);
+                }
+            }
         }
         mosquitto_disconnect(mosq);
         mosquitto_loop_stop(mosq, false);
